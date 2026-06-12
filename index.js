@@ -23,20 +23,41 @@ app.post("/checkKey", async (req, res) => {
     if (!data.fields) return res.json({ status: "error", reason: "Key not found." });
 
     const expiry = data.fields.expiry?.stringValue || "";
-    const used_by = data.fields.used_by?.stringValue || "";
+    const max_devices = parseInt(data.fields.max_devices?.integerValue || data.fields.max_devices?.stringValue || 1);
+    const devices = data.fields.devices?.arrayValue?.values?.map(v => v.stringValue) || [];
     const today = new Date().toISOString().split("T")[0];
 
     if (expiry < today) return res.json({ status: "error", reason: "Key expired." });
-    if (used_by && used_by !== serial) return res.json({ status: "error", reason: "Key used on another device." });
 
-    const patchUrl = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/keys/${user_key}?key=${API_KEY}&updateMask.fieldPaths=used_by`;
-    await fetch(patchUrl, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ fields: { used_by: { stringValue: serial } } })
+    const alreadyConnected = devices.includes(serial);
+
+    if (!alreadyConnected) {
+      if (max_devices < 999 && devices.length >= max_devices) {
+        return res.json({ status: "error", reason: "Max devices reached (" + devices.length + "/" + max_devices + ")" });
+      }
+      devices.push(serial);
+      const patchUrl = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/keys/${user_key}?key=${API_KEY}&updateMask.fieldPaths=devices&updateMask.fieldPaths=used_by`;
+      await fetch(patchUrl, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fields: {
+            used_by: { stringValue: serial },
+            devices: { arrayValue: { values: devices.map(d => ({ stringValue: d })) } }
+          }
+        })
+      });
+    }
+
+    return res.json({
+      status: "success",
+      data: {
+        expired_date: expiry,
+        devices: devices.length,
+        max_devices: max_devices
+      }
     });
 
-    return res.json({ status: "success", data: { expired_date: expiry } });
   } catch (e) {
     return res.json({ status: "error", reason: "Server error." });
   }
